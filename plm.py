@@ -2,7 +2,12 @@
  
 import numpy as np
 from scipy.sparse import *
+import os
+from colorama import init
+from colorama import Fore, Back, Style
 from scipy import *
+import time
+import argparse
 from heapq import nlargest
 from itertools import izip
 from sklearn.feature_extraction.text import CountVectorizer
@@ -109,19 +114,22 @@ class ParsimoniousLM(object):
                 if w_id == word_id:
                     word_prob += self.background_model[d_id, w_id]
                     occurences += 1
-            #word_prob = np.nansum([row[1][word_id] for row in self.background_model])
-            #print [row[word_id] for row in self.background_model]
             return np.log(pow(np.exp(word_prob), 1.0/occurences))
         return word_prob
- 
+
  
 def demo():
     documents = ['er loopt een man op straat', 'de man is vies', 'allemaal nieuwe woorden', 'de straat is vies', 'de man heeft een gek hoofd', 'de hele straat kijkt naar de man']
     request = 'op de straat is vies lol'
+
+    time_start = time.time()
     # initialize a parsimonious language model
     plm = ParsimoniousLM(documents, 0.1)
     # compute a LM for each document in the document collection
     plm.fit(documents)
+
+    time_spent = time.time() - time_start
+    print "Trained model on %s documents and %s words in %f (avg %f)" % (len(documents), len(plm.vectorizer.vocabulary_), time_spent, time_spent/len(documents))
 
     print "--- Parsimony at index time"
     query_lm = plm.lm(request, 50, 1e-5)
@@ -136,5 +144,46 @@ def demo():
     ## sort by increasing entropy
     #print [(documents[i], score) for i, score in sorted(plm.predict_proba(qlm), key=lambda i: i[1])]
    
-if __name__ == '__main__':
-    demo()
+
+init(autoreset=True)
+
+argparser = argparse.ArgumentParser()
+argparser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
+argparser.add_argument("-b", "--background", help="the directory with background files")
+argparser.add_argument("-f", "--foreground", help="the directory with foreground files")
+argparser.add_argument("-r", "--recursive", help="traverse the directories recursively", action="store_true")
+argparser.add_argument("-e", "--extension", help="only use files with this extension", default="txt")
+argparser.add_argument("-w", "--weight", help="the mixture parameter between background and foreground", type=float, default="0.5")
+
+args = argparser.parse_args()
+
+if args.verbose:
+    print Fore.YELLOW + "Verbosity enabled"
+    print Fore.YELLOW + "Background files in: %s" % args.background
+    print Fore.YELLOW + "Foreground files in: %s" % args.foreground
+    print Fore.YELLOW + "Recursive file search: %s" % ("Yes" if test else "No")
+    print Fore.YELLOW + "Lambda: %f" % args.weight
+    print Fore.YELLOW + "Extension: %s" % args.extension
+
+if args.background is not None:
+    file_read_start = time.time()
+    files_read = 0
+
+    background_files = []
+    for root, dirs, files in os.walk(args.background):
+        for file in files:
+            if file.endswith("." + args.extension):
+                background_files.append(root + '/' + file)
+                #with open(root + '/' + file, 'r') as f:
+                    #for line in f:
+                    #    print line
+                files_read += 1
+        print background_files
+    if args.verbose:
+        if files_read > 0:
+            file_read_spent = time.time() - file_read_start
+            print Fore.YELLOW + "Read %d background files in %f seconds (avg %f)" % (files_read, file_read_spent, file_read_spent/files_read)
+        else:
+            print Fore.RED + "No background files read. Is it the right directory?"
+    
+
