@@ -2,6 +2,7 @@
  
 import numpy as np
 from scipy.sparse import *
+from numba import jit
 import os
 from colorama import init
 from colorama import Fore, Back, Style
@@ -45,7 +46,12 @@ class ParsimoniousLM(object):
         self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df)
 
         # corpus frequency
-        cf = np.array(self.vectorizer.fit_transform(documents).sum(axis=0))[0]
+        corpus = []
+        for doc in documents:
+            with open(doc, 'r') as f:
+                for line in f:
+                    corpus.append( line.rstrip())
+        cf = np.array(self.vectorizer.fit_transform(corpus).sum(axis=0))[0]
         
         # Equation (2): log(P(t_i|C) * (1-lambda)) 
         self.corpus_prob = (np.log(cf) - np.log(np.sum(cf))) + np.log(1-self.l)
@@ -174,16 +180,17 @@ if args.background is not None:
         for file in files:
             if file.endswith("." + args.extension):
                 background_files.append(root + '/' + file)
-                #with open(root + '/' + file, 'r') as f:
-                    #for line in f:
-                    #    print line
                 files_read += 1
-        print background_files
     if args.verbose:
         if files_read > 0:
             file_read_spent = time.time() - file_read_start
-            print Fore.YELLOW + "Read %d background files in %f seconds (avg %f)" % (files_read, file_read_spent, file_read_spent/files_read)
+            print Fore.GREEN + "Read %d background files in %f seconds (avg %f)" % (files_read, file_read_spent, file_read_spent/files_read)
         else:
             print Fore.RED + "No background files read. Is it the right directory?"
-    
-
+            system.exit(8)
+   
+lm_build_start = time.time()
+plm = ParsimoniousLM(background_files, 0.25)
+if args.verbose:
+    lm_build_spent = time.time() - lm_build_start
+    print Fore.GREEN + "Read %d unique words in %f seconds (avg %f)" % (len(plm.vectorizer.vocabulary_), lm_build_spent, lm_build_spent/files_read)
