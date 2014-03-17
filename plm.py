@@ -1,6 +1,8 @@
 #! /usr/bin/env python
  
 import numpy as np
+from scipy.sparse import *
+from scipy import *
 from heapq import nlargest
 from itertools import izip
 from sklearn.feature_extraction.text import CountVectorizer
@@ -73,16 +75,15 @@ class ParsimoniousLM(object):
                 break
         return doc_prob
  
-    def fit(self, texts, labels=None, iterations=50, eps=1e-5):
-        self.background_model = []
-        if labels is None:
-            labels = range(len(texts))
-        for label, text in izip(labels, texts):
+    def fit(self, texts, iterations=50, eps=1e-5):
+        self.background_model = dok_matrix((len(texts),len(self.vectorizer.vocabulary_)))
+        for label, text in enumerate(texts):
             lm = self.lm(text, iterations, eps)
-            self.background_model.append((label, lm))
+            for (m,n) in [ (x,y) for (x,y) in enumerate(lm) if not (np.isnan(y) or np.isinf(y)) ]:
+                self.background_model[label,m] = n
  
-    def fit_transform(self, texts, labels=None, iterations=50, eps=1e-5):
-        self.fit(texts, labels, iterations, eps)
+    def fit_transform(self, texts, iterations=50, eps=1e-5):
+        self.fit(texts, iterations, eps)
         return self.background_model
  
     # Equation (4)
@@ -102,34 +103,31 @@ class ParsimoniousLM(object):
         word_prob = 0
         
         word_id = self.vectorizer.vocabulary_.get(word)
-
-        #word_prob = np.nansum([row[1][word_id] for row in self.background_model])
-        #print [row[word_id] for row in self.background_model]
+        if word_id is not None:
+            occurences = 0
+            for (d_id, w_id) in self.background_model.keys():
+                if w_id == word_id:
+                    word_prob += self.background_model[d_id, w_id]
+                    occurences += 1
+            #word_prob = np.nansum([row[1][word_id] for row in self.background_model])
+            #print [row[word_id] for row in self.background_model]
+            return np.log(pow(np.exp(word_prob), 1.0/occurences))
         return word_prob
  
  
 def demo():
     documents = ['er loopt een man op straat', 'de man is vies', 'allemaal nieuwe woorden', 'de straat is vies', 'de man heeft een gek hoofd', 'de hele straat kijkt naar de man']
-    request = 'op de straat is vies'
+    request = 'op de straat is vies lol'
     # initialize a parsimonious language model
     plm = ParsimoniousLM(documents, 0.1)
     # compute a LM for each document in the document collection
     plm.fit(documents)
 
-    print [ ( bla[0][2] for bla in did[1] )  for did in plm.background_model]
-    #print [ bla[0] for bla in [did[1] ] for did in plm.background_model]
-
-
-    #print "- Background model"
-    #for document in plm.background_model:
-    #    (doc_id, doc_lm) = document
-    #    print doc_id, len(doc_lm)
-
-    #print "--- Parsimony at index time"
-    #query_lm = plm.lm(request, 50, 1e-5)
-    #print "    --- word probs"
-    #for word in request.split():
-    #    print plm.word_prob(word)
+    print "--- Parsimony at index time"
+    query_lm = plm.lm(request, 50, 1e-5)
+    print "    --- word probs"
+    for word in request.split():
+        print word, plm.word_prob(word)
 
     #print "--- Parsimony at request time"
     ## compute a LM model for the test or request document
