@@ -31,8 +31,9 @@ def logsum(x):
     return out
  
 class ParsimoniousLM(object):
-    l = 0.5
-    def __init__(self, documents, weight, min_df=1, max_df=1.0):
+    def __init__(self, documents, weight=0.5, min_df=1, max_df=1.0):
+        self.l = weight
+
         # analyses words, originally it counted the characters
         self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df)
 
@@ -40,7 +41,7 @@ class ParsimoniousLM(object):
         cf = np.array(self.vectorizer.fit_transform(documents).sum(axis=0))[0]
         
         # Equation (2): log(P(t_i|C) * (1-lambda)) 
-        self.pc = (np.log(cf) - np.log(np.sum(cf))) + np.log(1-self.l)
+        self.corpus_prob = (np.log(cf) - np.log(np.sum(cf))) + np.log(1-self.l)
  
     def topK(self, k, document, iterations=50, eps=1e-5):
         ptf = self.lm(document, iterations, eps)
@@ -51,63 +52,91 @@ class ParsimoniousLM(object):
         # term frequency
         tf = self.vectorizer.transform([document]).toarray()[0]
 
-        # Equation (3): log(P(t_i|D=d) * lambda)
-        ptf = (np.log(tf > 0) - np.log((tf > 0).sum())) + np.log(self.l)
+        # Equation (3): log(P(t_i|D=d))
+        doc_prob = (np.log(tf > 0) - np.log((tf > 0).sum()))# + np.log(self.l)
 
-        ptf = self.EM(tf, ptf, iterations, eps)
-        return ptf
+        doc_prob = self.EM(tf, doc_prob, iterations, eps)
+        return doc_prob
  
-    def EM(self, tf, ptf, iterations, eps):
+    def EM(self, tf, doc_prob, iterations, eps):
         tf = np.log(tf)
         for i in xrange(1, iterations + 1):
-           
+            doc_prob += np.log(self.l)
+
             # follows E and M steps from the paper
-            #E = tf + np.log(self.l) + ptf - np.log((1-self.l)*np.exp(self.pc) + self.l*np.exp(ptf)) 
-            E = tf + ptf - np.logaddexp(self.pc, ptf)
-            M = E - logsum(E) # np.logaddexp.reduce(E)
+            E = tf + doc_prob - np.logaddexp(self.corpus_prob, doc_prob)
+            M = E - logsum(E)
  
-            diff = M - ptf
-            ptf = M
+            diff = M - doc_prob
+            doc_prob = M
             if (diff < eps).all():
                 break
-        return ptf
+        return doc_prob
  
     def fit(self, texts, labels=None, iterations=50, eps=1e-5):
-        self.fitted_ = []
+        self.background_model = []
         if labels is None:
             labels = range(len(texts))
         for label, text in izip(labels, texts):
             lm = self.lm(text, iterations, eps)
-            self.fitted_.append((label, lm))
+            self.background_model.append((label, lm))
  
     def fit_transform(self, texts, labels=None, iterations=50, eps=1e-5):
         self.fit(texts, labels, iterations, eps)
-        return self.fitted_
+        return self.background_model
  
     # Equation (4)
-    def cross_entropy(self, qlm, rlm):
-        return -np.sum(np.exp(qlm) * np.logaddexp(self.pc, rlm * self.l))
+    def cross_entropy(self, query_lm, background_lm):
+        return -np.sum(np.exp(query_lm) * np.logaddexp(self.corpus_prob, background_lm * self.l))
  
     def predict_proba(self, query):
-        if not hasattr(self, 'fitted_'):
+        if not hasattr(self, 'background_model'):
             raise ValueError("No Language Model fitted.")
-        for i in range(len(self.fitted_)):
-            score = self.cross_entropy(query, self.fitted_[i][1])
-            yield self.fitted_[i][0], score
+        for i in range(len(self.background_model)):
+            score = self.cross_entropy(query, self.background_model[i][1])
+            yield self.background_model[i][0], score
+
+    def word_prob(self, word):
+        if not hasattr(self, 'background_model'):
+            raise ValueError("No Language Model fitted.")
+        word_prob = 0
+        
+        word_id = self.vectorizer.vocabulary_.get(word)
+
+        #word_prob = np.nansum([row[1][word_id] for row in self.background_model])
+        #print [row[word_id] for row in self.background_model]
+        return word_prob
  
  
 def demo():
     documents = ['er loopt een man op straat', 'de man is vies', 'allemaal nieuwe woorden', 'de straat is vies', 'de man heeft een gek hoofd', 'de hele straat kijkt naar de man']
-    request = 'de straat is vies'
+    request = 'op de straat is vies'
     # initialize a parsimonious language model
     plm = ParsimoniousLM(documents, 0.1)
     # compute a LM for each document in the document collection
     plm.fit(documents)
-    # compute a LM model for the test or request document
-    qlm = plm.lm(request, 50, 1e-5)
-    # compute the cross-entropy between the LM of the test document and all training document LMs
-    # sort by increasing entropy
-    print [(documents[i], score) for i, score in sorted(plm.predict_proba(qlm), key=lambda i: i[1])]
+
+    print [ ( bla[0][2] for bla in did[1] )  for did in plm.background_model]
+    #print [ bla[0] for bla in [did[1] ] for did in plm.background_model]
+
+
+    #print "- Background model"
+    #for document in plm.background_model:
+    #    (doc_id, doc_lm) = document
+    #    print doc_id, len(doc_lm)
+
+    #print "--- Parsimony at index time"
+    #query_lm = plm.lm(request, 50, 1e-5)
+    #print "    --- word probs"
+    #for word in request.split():
+    #    print plm.word_prob(word)
+
+    #print "--- Parsimony at request time"
+    ## compute a LM model for the test or request document
+    #qlm = plm.lm(request, 50, 1e-5)
+    ## compute the cross-entropy between the LM of the test document and all training document LMs
+    ## sort by increasing entropy
+    #print [(documents[i], score) for i, score in sorted(plm.predict_proba(qlm), key=lambda i: i[1])]
    
 if __name__ == '__main__':
     demo()
