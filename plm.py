@@ -31,27 +31,38 @@ def logsum(x):
     return out
  
 class ParsimoniousLM(object):
+    l = 0.5
     def __init__(self, documents, weight, min_df=1, max_df=1.0):
-        self.weight = np.log(weight)
-        self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df, analyzer=lambda i: i)
+        # analyses words, originally it counted the characters
+        self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df)
+
+        # corpus frequency
         cf = np.array(self.vectorizer.fit_transform(documents).sum(axis=0))[0]
-        self.pc = (np.log(cf) - np.log(np.sum(cf))) + np.log(1 - weight)
+        
+        # Equation (2): log(P(t_i|C) * (1-lambda)) 
+        self.pc = (np.log(cf) - np.log(np.sum(cf))) + np.log(1-self.l)
  
     def topK(self, k, document, iterations=50, eps=1e-5):
         ptf = self.lm(document, iterations, eps)
         return nlargest(k, izip(self.vectorizer.get_feature_names(), ptf), lambda tp: tp[1])
  
+    # Create a language model per document
     def lm(self, document, iterations, eps):
+        # term frequency
         tf = self.vectorizer.transform([document]).toarray()[0]
-        ptf = np.log(tf > 0) - np.log((tf > 0).sum())
+
+        # Equation (3): log(P(t_i|D=d) * lambda)
+        ptf = (np.log(tf > 0) - np.log((tf > 0).sum())) + np.log(self.l)
+
         ptf = self.EM(tf, ptf, iterations, eps)
         return ptf
  
     def EM(self, tf, ptf, iterations, eps):
         tf = np.log(tf)
         for i in xrange(1, iterations + 1):
-            ptf += self.weight
-            
+           
+            # follows E and M steps from the paper
+            #E = tf + np.log(self.l) + ptf - np.log((1-self.l)*np.exp(self.pc) + self.l*np.exp(ptf)) 
             E = tf + ptf - np.logaddexp(self.pc, ptf)
             M = E - logsum(E) # np.logaddexp.reduce(E)
  
@@ -73,8 +84,9 @@ class ParsimoniousLM(object):
         self.fit(texts, labels, iterations, eps)
         return self.fitted_
  
+    # Equation (4)
     def cross_entropy(self, qlm, rlm):
-        return -np.sum(np.exp(qlm) * np.logaddexp(self.pc, rlm + self.weight))
+        return -np.sum(np.exp(qlm) * np.logaddexp(self.pc, rlm * self.l))
  
     def predict_proba(self, query):
         if not hasattr(self, 'fitted_'):
@@ -85,8 +97,7 @@ class ParsimoniousLM(object):
  
  
 def demo():
-    documents = ['er loopt een man op straat', 'de man is vies', 
-                 'de man heeft een gek hoofd', 'de hele straat kijkt naar de man']
+    documents = ['er loopt een man op straat', 'de man is vies', 'allemaal nieuwe woorden', 'de straat is vies', 'de man heeft een gek hoofd', 'de hele straat kijkt naar de man']
     request = 'de straat is vies'
     # initialize a parsimonious language model
     plm = ParsimoniousLM(documents, 0.1)
