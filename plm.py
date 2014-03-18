@@ -2,7 +2,7 @@
  
 import numpy as np
 from scipy.sparse import *
-from numba import jit
+#from numba import jit
 import os
 from colorama import init
 from colorama import Fore, Back, Style
@@ -86,15 +86,25 @@ class ParsimoniousLM(object):
                 break
         return doc_prob
  
-    def fit(self, texts, iterations=50, eps=1e-5):
+    def fit(self, texts, iterations=50, eps=1e-5, files=False):
         self.background_model = dok_matrix((len(texts),len(self.vectorizer.vocabulary_)))
-        for label, text in enumerate(texts):
-            lm = self.lm(text, iterations, eps)
-            for (m,n) in [ (x,y) for (x,y) in enumerate(lm) if not (np.isnan(y) or np.isinf(y)) ]:
-                self.background_model[label,m] = n
+        if files:
+            for label, file_name in enumerate(texts):
+                file_content = ""
+                with open(file_name, 'r') as f:
+                    for line in f:
+                        file_content += line.rstrip()
+                lm = self.lm(file_content, iterations, eps)
+                for (m,n) in [ (x,y) for (x,y) in enumerate(lm) if not (np.isnan(y) or np.isinf(y)) ]:
+                    self.background_model[label,m] = n
+        else:
+            for label, text in enumerate(texts):
+                lm = self.lm(text, iterations, eps)
+                for (m,n) in [ (x,y) for (x,y) in enumerate(lm) if not (np.isnan(y) or np.isinf(y)) ]:
+                    self.background_model[label,m] = n
  
-    def fit_transform(self, texts, iterations=50, eps=1e-5):
-        self.fit(texts, iterations, eps)
+    def fit_transform(self, texts, iterations=50, eps=1e-5, files=False):
+        self.fit(texts, iterations, eps, files)
         return self.background_model
  
     # Equation (4)
@@ -120,6 +130,8 @@ class ParsimoniousLM(object):
                 if w_id == word_id:
                     word_prob += self.background_model[d_id, w_id]
                     occurences += 1
+            print Fore.CYAN + "%s: %f" % (word_prob
+            # geometric average (sum over logs)
             return np.log(pow(np.exp(word_prob), 1.0/occurences))
         return word_prob
 
@@ -194,3 +206,8 @@ plm = ParsimoniousLM(background_files, 0.25)
 if args.verbose:
     lm_build_spent = time.time() - lm_build_start
     print Fore.GREEN + "Read %d unique words in %f seconds (avg %f)" % (len(plm.vectorizer.vocabulary_), lm_build_spent, lm_build_spent/files_read)
+
+plm.fit(background_files, files=True)
+
+for word, word_id in plm.vectorizer.vocabulary_.iteritems():
+    print word, plm.word_prob(word_id)
