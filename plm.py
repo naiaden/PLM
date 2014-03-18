@@ -4,6 +4,7 @@ import numpy as np
 from scipy.sparse import *
 #from numba import jit
 import os
+import sys
 from colorama import init
 from colorama import Fore, Back, Style
 from scipy import *
@@ -88,6 +89,9 @@ class ParsimoniousLM(object):
 
         if files:
             for label, file_name in enumerate(texts):
+                if args.verbose:
+                    sys.stdout.write(Fore.GREEN + "\r%d%%" %(float(label)/len(texts)*100.0))
+                    sys.stdout.flush()
                 file_content = ""
                 with open(file_name, 'r') as f:
                     for line in f:
@@ -98,6 +102,9 @@ class ParsimoniousLM(object):
                     self.background_freq[label,m] = n
                 for (m,n) in [ (x,y) for (x,y) in enumerate(lm) if not (np.isnan(y) or np.isinf(y)) ]:
                     self.background_model[label,m] = n
+            if args.verbose:
+                sys.stdout.write("\r")
+                sys.stdout.flush()
         else:
             for label, text in enumerate(texts):
                 tf, lm = self.lm(text, iterations, eps)
@@ -178,4 +185,5 @@ if args.verbose:
     print Fore.GREEN + "Fitted the model in %f seconds (avg %fs per file/avg %fs per token)" % (lm_fit_spent, lm_fit_spent/files_read,lm_fit_spent/nr_tokens)
 
 for word, word_id in plm.vectorizer.vocabulary_.iteritems():
-    print "(%d) %s: %f" % (word_id, word, plm.word_prob(word))
+    #print "(%d) %s: %f" % (word_id, word, plm.word_prob(word))
+    pass
