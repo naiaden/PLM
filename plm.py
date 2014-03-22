@@ -15,7 +15,24 @@ from itertools import izip
 from sklearn.feature_extraction.text import CountVectorizer
  
 old_settings = np.seterr(all='ignore') 
- 
+
+
+def read_files(directory, extension, verbose=False, name=""):
+    file_read_start = time.time()
+    found_files = []
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if file.endswith("." + extension):
+                found_files.append(root + '/' + file)
+    if verbose:
+        if found_files:
+            file_read_spent = time.time() - file_read_start
+            print Fore.GREEN + "Read %d %sfiles in %f seconds (avg %fs per file)" % (len(found_files), name.rstrip() + ' ', file_read_spent, file_read_spent/len(found_files))
+        else:
+            print Fore.RED + "No %sfiles read. Is it the right directory?" % (name.rstrip() + ' ')
+            system.exit(8)
+    return found_files
+
 def logsum(x):
     """Computes the sum of x assuming x is in the log domain.
  
@@ -40,6 +57,26 @@ def logsum(x):
     return out
  
 class ParsimoniousLM(object):
+
+    def process_background_corpus(self, files):
+        for label, file_name in enumerate(texts):
+            if args.verbose:
+                sys.stdout.write(Fore.GREEN + "\r%d/%d %d%%" %(label,len(texts),float(label)/len(texts)*100.0))
+                sys.stdout.flush()
+            file_content = ""
+            with open(file_name, 'r') as f:
+                for line in f:
+                    file_content += line.rstrip()
+            tf, lm = self.lm(file_content, iterations, eps)
+
+            for (m,n) in [ (x,y) for (x,y) in enumerate(tf) if y > 0 ]:
+                self.background_freq[label,m] = n
+            for (m,n) in [ (x,y) for (x,y) in enumerate(lm) if not (np.isnan(y) or np.isinf(y)) ]:
+                self.background_model[label,m] = n
+        if args.verbose:
+            sys.stdout.write("\r")
+            sys.stdout.flush()
+
     def __init__(self, documents, weight=0.5, min_df=1, max_df=1.0):
         self.l = weight
 
@@ -90,7 +127,7 @@ class ParsimoniousLM(object):
         if files:
             for label, file_name in enumerate(texts):
                 if args.verbose:
-                    sys.stdout.write(Fore.GREEN + "\r%d%%" %(float(label)/len(texts)*100.0))
+                    sys.stdout.write(Fore.GREEN + "\r%d/%d %d%%" %(label,len(texts),float(label)/len(texts)*100.0))
                     sys.stdout.flush()
                 file_content = ""
                 with open(file_name, 'r') as f:
@@ -154,36 +191,29 @@ if args.verbose:
     print Fore.YELLOW + "Extension: %s" % args.extension
 
 if args.background is not None:
-    file_read_start = time.time()
-    files_read = 0
+    background_files = read_files(args.background, args.extension, verbose=args.verbose, name="background")
 
-    background_files = []
-    for root, dirs, files in os.walk(args.background):
-        for file in files:
-            if file.endswith("." + args.extension):
-                background_files.append(root + '/' + file)
-                files_read += 1
-    if args.verbose:
-        if files_read > 0:
-            file_read_spent = time.time() - file_read_start
-            print Fore.GREEN + "Read %d background files in %f seconds (avg %fs per file)" % (files_read, file_read_spent, file_read_spent/files_read)
-        else:
-            print Fore.RED + "No background files read. Is it the right directory?"
-            system.exit(8)
-   
+if args.foreground is not None:
+    foreground_files = read_files(args.foreground, args.extension, verbose=args.verbose, name="foreground")
+
 lm_build_start = time.time()
-plm = ParsimoniousLM(background_files, 0.25)
+plm = ParsimoniousLM(background_files, args.weight)
 if args.verbose:
     lm_build_spent = time.time() - lm_build_start
-    print Fore.GREEN + "Read %d unique words in %f seconds (avg %fs per file/avg %fs per type)" % (len(plm.vectorizer.vocabulary_), lm_build_spent, lm_build_spent/files_read, lm_build_spent/len(plm.vectorizer.vocabulary_))
+    print Fore.GREEN + "Read %d unique words in %f seconds (avg %fs per file/avg %fs per type)" % (len(plm.vectorizer.vocabulary_), lm_build_spent, lm_build_spent/len(background_files), lm_build_spent/len(plm.vectorizer.vocabulary_))
 
-lm_fit_start = time.time()
-plm.fit(background_files, files=True)
-if args.verbose:
-    lm_fit_spent = time.time() - lm_fit_start
-    nr_tokens = sum(plm.background_freq.sum(0))
-    print Fore.GREEN + "Fitted the model in %f seconds (avg %fs per file/avg %fs per token)" % (lm_fit_spent, lm_fit_spent/files_read,lm_fit_spent/nr_tokens)
 
-for word, word_id in plm.vectorizer.vocabulary_.iteritems():
-    #print "(%d) %s: %f" % (word_id, word, plm.word_prob(word))
-    pass
+###                                                        /|\
+### Read the words, but only those in the background corpus |
+###                                                         |
+
+#lm_fit_start = time.time()
+#plm.fit(background_files, files=True)
+#if args.verbose:
+#    lm_fit_spent = time.time() - lm_fit_start
+#    nr_tokens = sum(plm.background_freq.sum(0))
+#    print Fore.GREEN + "Fitted model with %d tokens in %f seconds (avg %fs per file/avg %fs per token)" % (nr_tokens, lm_fit_spent, lm_fit_spent/files_read,lm_fit_spent/nr_tokens)
+#
+#for word, word_id in plm.vectorizer.vocabulary_.iteritems():
+#    #print "(%d) %s: %f" % (word_id, word, plm.word_prob(word))
+#    pass
