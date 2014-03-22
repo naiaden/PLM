@@ -58,25 +58,6 @@ def logsum(x):
  
 class ParsimoniousLM(object):
 
-    def process_background_corpus(self, files):
-        for label, file_name in enumerate(texts):
-            if args.verbose:
-                sys.stdout.write(Fore.GREEN + "\r%d/%d %d%%" %(label,len(texts),float(label)/len(texts)*100.0))
-                sys.stdout.flush()
-            file_content = ""
-            with open(file_name, 'r') as f:
-                for line in f:
-                    file_content += line.rstrip()
-            tf, lm = self.lm(file_content, iterations, eps)
-
-            for (m,n) in [ (x,y) for (x,y) in enumerate(tf) if y > 0 ]:
-                self.background_freq[label,m] = n
-            for (m,n) in [ (x,y) for (x,y) in enumerate(lm) if not (np.isnan(y) or np.isinf(y)) ]:
-                self.background_model[label,m] = n
-        if args.verbose:
-            sys.stdout.write("\r")
-            sys.stdout.flush()
-
     def __init__(self, documents, weight=0.5, min_df=1, max_df=1.0):
         self.l = weight
 
@@ -121,8 +102,8 @@ class ParsimoniousLM(object):
         return doc_prob
  
     def fit(self, texts, iterations=50, eps=1e-5, files=False):
-        self.background_model = dok_matrix((len(texts),len(self.vectorizer.vocabulary_)))
-        self.background_freq = dok_matrix((len(texts),len(self.vectorizer.vocabulary_)))
+        self.document_model = dok_matrix((len(texts),len(self.vectorizer.vocabulary_)))
+        self.document_freq = dok_matrix((len(texts),len(self.vectorizer.vocabulary_)))
 
         if files:
             for label, file_name in enumerate(texts):
@@ -136,9 +117,9 @@ class ParsimoniousLM(object):
                 tf, lm = self.lm(file_content, iterations, eps)
 
                 for (m,n) in [ (x,y) for (x,y) in enumerate(tf) if y > 0 ]:
-                    self.background_freq[label,m] = n
+                    self.document_freq[label,m] = n
                 for (m,n) in [ (x,y) for (x,y) in enumerate(lm) if not (np.isnan(y) or np.isinf(y)) ]:
-                    self.background_model[label,m] = n
+                    self.document_model[label,m] = n
             if args.verbose:
                 sys.stdout.write("\r")
                 sys.stdout.flush()
@@ -147,12 +128,12 @@ class ParsimoniousLM(object):
                 tf, lm = self.lm(text, iterations, eps)
                 
                 for (m,n) in [ (x,y) for (x,y) in enumerate(tf) if y > 0 ]:
-                    self.background_freq[label,m] = n
+                    self.document_freq[label,m] = n
                 for (m,n) in [ (x,y) for (x,y) in enumerate(lm) if not (np.isnan(y) or np.isinf(y)) ]:
-                    self.background_model[label,m] = n
+                    self.document_model[label,m] = n
  
     def word_prob(self, word):
-        if not hasattr(self, 'background_model'):
+        if not hasattr(self, 'document_model'):
             raise ValueError("No Language Model fitted.")
         word_prob = 0
        
@@ -162,10 +143,10 @@ class ParsimoniousLM(object):
         word_id = self.vectorizer.vocabulary_.get(word)
         if word_id is not None:
             occurences = 0
-            for ((d_id, w_id), val) in self.background_model.items():
+            for ((d_id, w_id), val) in self.document_model.items():
                 if w_id == word_id:
-                    word_prob += self.background_model[d_id, w_id]
-                    occurences += self.background_freq[d_id, w_id]
+                    word_prob += self.document_model[d_id, w_id]
+                    occurences += self.document_freq[d_id, w_id]
             # geometric average (sum over logs)
             return np.log(pow(np.exp(word_prob), 1.0/occurences)) if occurences > 0 else word_prob
         return word_prob
@@ -179,6 +160,7 @@ argparser.add_argument("-f", "--foreground", help="the directory with foreground
 argparser.add_argument("-r", "--recursive", help="traverse the directories recursively", action="store_true")
 argparser.add_argument("-e", "--extension", help="only use files with this extension", default="txt")
 argparser.add_argument("-w", "--weight", help="the mixture parameter between background and foreground", type=float, default="0.5")
+argparser.add_argument("-i", "--iterations", help="the number of iterations for EM", type=int, default="50")
 
 args = argparser.parse_args()
 
@@ -189,6 +171,7 @@ if args.verbose:
     print Fore.YELLOW + "Recursive file search: %s" % ("Yes" if test else "No")
     print Fore.YELLOW + "Lambda: %f" % args.weight
     print Fore.YELLOW + "Extension: %s" % args.extension
+    print Fore.YELLOW + "Iterations: %d" % args.iterations
 
 if args.background is not None:
     background_files = read_files(args.background, args.extension, verbose=args.verbose, name="background")
@@ -200,20 +183,21 @@ lm_build_start = time.time()
 plm = ParsimoniousLM(background_files, args.weight)
 if args.verbose:
     lm_build_spent = time.time() - lm_build_start
-    print Fore.GREEN + "Read %d unique words in %f seconds (avg %fs per file/avg %fs per type)" % (len(plm.vectorizer.vocabulary_), lm_build_spent, lm_build_spent/len(background_files), lm_build_spent/len(plm.vectorizer.vocabulary_))
+    print Fore.GREEN + "Built a vocabulary with %d words from %d background corpus files in %f seconds (avg %fs per file/avg %fs per type)" % (len(plm.vectorizer.vocabulary_), len(background_files), lm_build_spent, lm_build_spent/len(background_files), lm_build_spent/len(plm.vectorizer.vocabulary_))
+
+# Clean up some of the mess
+background_files = None
 
 
-###                                                        /|\
-### Read the words, but only those in the background corpus |
-###                                                         |
+lm_fit_start = time.time()
+plm.fit(foreground_files, files=True)
+if args.verbose:
+    lm_fit_spent = time.time() - lm_fit_start
+    nr_tokens = sum(plm.document_freq.sum(0))
+    print Fore.GREEN + "Fitted %d document models with %d tokens in %f seconds (avg %fs per file/avg %fs per token)" % ((plm.document_freq.shape)[0], nr_tokens, lm_fit_spent, lm_fit_spent/len(foreground_files),lm_fit_spent/nr_tokens)
 
-#lm_fit_start = time.time()
-#plm.fit(background_files, files=True)
-#if args.verbose:
-#    lm_fit_spent = time.time() - lm_fit_start
-#    nr_tokens = sum(plm.background_freq.sum(0))
-#    print Fore.GREEN + "Fitted model with %d tokens in %f seconds (avg %fs per file/avg %fs per token)" % (nr_tokens, lm_fit_spent, lm_fit_spent/files_read,lm_fit_spent/nr_tokens)
-#
-#for word, word_id in plm.vectorizer.vocabulary_.iteritems():
-#    #print "(%d) %s: %f" % (word_id, word, plm.word_prob(word))
-#    pass
+
+for (itr, (word, word_id)) in enumerate(plm.vectorizer.vocabulary_.iteritems()):
+    print "(%d) %s: %f" % (word_id, word, plm.word_prob(word))
+    if itr > 10:
+        break
