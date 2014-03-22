@@ -198,6 +198,6 @@ if args.verbose:
 
 
 for (itr, (word, word_id)) in enumerate(plm.vectorizer.vocabulary_.iteritems()):
-    print "(%d) %s: %f" % (word_id, word, plm.word_prob(word))
-    if itr > 10:
-        break
+    print ("(%d) %s: %f" % (word_id, word, plm.word_prob(word))).encode('utf-8')
+    #if itr > 10:
+    #    break
