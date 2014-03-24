@@ -19,6 +19,11 @@ import cPickle as pickle
 old_settings = np.seterr(all='ignore') 
 
 def read_serialised_file(serialised_file, verbose=False, name=""):
+    """ This method returns data from a serialised binary pickle file. 
+        The content of the file is not checked, and passed on as is. 
+    
+        name is only used in verbose output.
+    """
     file_read_start = time.time()
     if verbose:
         sys.stdout.write(Fore.GREEN + "Reading serialised %sfile: %s" % (name.rstrip() + ' ', serialised_file))
@@ -35,6 +40,12 @@ def read_serialised_file(serialised_file, verbose=False, name=""):
     return unpickled_data
         
 def write_serialised_file(content, file_name, verbose=False, name=""):
+    """ This method writes an object to a serialised binary pickle file.
+        The content of the file is not checked, and written to file as is.
+        If the file already exists, the current file is overwritten.
+    
+        name is only used in verbose output.
+    """
     file_write_start = time.time()
     if verbose:
         sys.stdout.write(Fore.GREEN + "Writing serialised %sfile: %s" % (name.rstrip() + ' ', file_name))
@@ -44,8 +55,12 @@ def write_serialised_file(content, file_name, verbose=False, name=""):
     if verbose:
         print Fore.GREEN + "\rWrote the serialised %sfile in %f seconds to %s" % (name.rstrip() + ' ', time.time() - file_write_start, file_name)
 
-
 def read_files(directory, extension, verbose=False, name=""):
+    """ This method returns a list of files with a certain extension from a directory.
+        The files themselves are not read.
+    
+        name is only used in verbose output.
+    """
     file_read_start = time.time()
     found_files = []
     if verbose:
@@ -64,20 +79,20 @@ def read_files(directory, extension, verbose=False, name=""):
     return found_files
 
 def logsum(x):
-    """Computes the sum of x assuming x is in the log domain.
- 
-    Returns log(sum(exp(x))) while minimizing the possibility of
-    over/underflow.
- 
-    Examples
-    ========
- 
-    >>> import numpy as np
-    >>> a = np.arange(10)
-    >>> np.log(np.sum(np.exp(a)))
-    9.4586297444267107
-    >>> logsum(a)
-    9.4586297444267107
+    """ Computes the sum of x assuming x is in the log domain.
+     
+        Returns log(sum(exp(x))) while minimizing the possibility of
+        over/underflow.
+     
+        Examples
+        ========
+     
+        >>> import numpy as np
+        >>> a = np.arange(10)
+        >>> np.log(np.sum(np.exp(a)))
+        9.4586297444267107
+        >>> logsum(a)
+        9.4586297444267107
     """
     # Use the max to normalize, as with the log this is what accumulates
     # the less errors
@@ -89,6 +104,12 @@ def logsum(x):
 class ParsimoniousLM(object):
 
     def __init__(self, weight=0.5, min_df=1, max_df=1.0, files=None, serialised=None, vocabulary=None, verbose=False):
+        """ This constructor builds a vectorizer and a background corpus' frequency counts
+            weight is the interpolation factor/mixture weight for a balance between the background and foreground proabilities.
+            min_df, maxdf are the minimum and respectively maximum document frequencies for the word needed to be modelled.
+            files is the list of files to be read from which a background corpus is built. Should be None if serialised is not None.
+            serialised is a binary serialised file containing the background corpus' frequency counts. If serialised is not None, a vocabulary must be given as well. serialised should be None if files is not None. The serialised file should not be normalised, and not be multiplied by lamdba.
+        """
         self.l = weight
 
         if serialised is not None and vocabulary is not None:
@@ -121,8 +142,10 @@ class ParsimoniousLM(object):
         if verbose:
             print "\r" + Fore.Green + "Done applying lambda in %f seconds" % (time.time() - lambda_application_start)
  
-    # Create a language model per document
     def lm(self, document, iterations, eps):
+        """ This methods creates a language model per document with n EM iterations and an eps treshold.
+            Returns the term frequencies and the document probabilities for all the words in document D.
+        """
         # term frequency
         tf = self.vectorizer.transform([document]).toarray()[0]
 
@@ -133,6 +156,9 @@ class ParsimoniousLM(object):
         return (tf, doc_prob)
  
     def EM(self, tf, doc_prob, iterations, eps):
+        """ This methods does the two EM steps with n EM iterations and an eps treshold, for P(t|D)
+            Returns the document probabilities.
+        """
         tf = np.log(tf)
         for i in xrange(1, iterations + 1):
             doc_prob += np.log(self.l)
@@ -148,6 +174,12 @@ class ParsimoniousLM(object):
         return doc_prob
  
     def fit(self, texts, iterations=50, eps=1e-5, files=False):
+        """ This function fits a foreground model onto the background model. The foreground model consists of texts, and the EM parameters are iterations and epsilon for the convergence regulation.
+            If files is False, then texts contains an array of strings, each string comprising a document. If files is True, then each entry in texts is a file name pointing to a file that contains a text.
+
+            Returns no explicit value. The results are stored in document_model and document_freq, with the first one being the probabilities for the words, and the second the raw counts.
+
+        """
         self.document_model = dok_matrix((len(texts),len(self.vectorizer.vocabulary_)))
         self.document_freq = dok_matrix((len(texts),len(self.vectorizer.vocabulary_)))
 
@@ -179,6 +211,8 @@ class ParsimoniousLM(object):
                     self.document_model[label,m] = n
  
     def word_prob(self, word):
+        """ This function computes the word probability over the collection of foreground documents.
+        """
         if not hasattr(self, 'document_model'):
             raise ValueError("No Language Model fitted.")
         word_prob = 0
@@ -197,6 +231,9 @@ class ParsimoniousLM(object):
             return np.log(pow(np.exp(word_prob), 1.0/occurences)) if occurences > 0 else word_prob
         return word_prob
 
+
+################## Things to process cmd-line arguments and stuff
+
 init(autoreset=True)
 
 argparser = argparse.ArgumentParser(description="This (partial) implementation of the 'Parsimonious Language Model for Information Retrieval' (Hiemstra et al., 2004) is forked from F. Karsdorp's implementation (https://github.com/fbkarsdorp/PLM). This fork can be found on https://github.com/naiaden/PLM. You can direct your comments to l.onrust@let.ru.nl")
@@ -209,7 +246,7 @@ backgroundgroup_argparser.add_argument("-B", "--serialisedbackground", help="the
 foregroundgroup_argparser.add_argument("-f", "--foreground", help="the directory with foreground files", metavar="dir", dest="fdir")
 argparser.add_argument("-wb", "--writeserialisedbackground", help="write the background to a serialised file", metavar="file", dest="wserb")
 foregroundgroup_argparser.add_argument("-F", "--serialisedforeground", help="the serialised foreground file", metavar="file", dest="rserf")
-argparser.add_argument("-V", "--vocabulary", help="the vocabulary", metavar="file", dest="vocabulary")
+argparser.add_argument("-V", "--vocabulary", help="the vocabulary, only used for in/output of serialised files", metavar="file", dest="vocabulary")
 argparser.add_argument("-wf", "--writeserialisedforeground", help="write the foreground to a serialised file", metavar="file", dest="wserf")
 argparser.add_argument("-r", "--recursive", help="traverse the directories recursively", action="store_true")
 argparser.add_argument("-e", "--extension", help="only use files with this extension", default="txt", metavar="ext")
@@ -237,16 +274,14 @@ if args.verbose:
 ## Background part
 ##
 if args.bdir:
-    if args.verbose:
-        print Fore.GREEN + "Reading files from directory: %s" % (args.bdir)
-
     background_files = read_files(args.bdir, args.extension, verbose=args.verbose, name="background")
+
     lm_build_start = time.time()
     plm = ParsimoniousLM(args.weight, files=background_files)
 elif args.rserb:
     background_serialised_vocabulary = read_serialised_file(args.vocabulary, verbose=args.verbose, name="vocabulary")
-
     background_serialised = read_serialised_file(args.rserb, verbose=args.verbose, name="background")
+
     lm_build_start = time.time()
     plm = ParsimoniousLM(args.weight, serialised=background_serialised, vocabulary=background_serialised_vocabulary)
 else:
@@ -276,15 +311,14 @@ else:
     print Fore.RED + "No foreground input file given. Halting the execution!"
     sys.exit(8)
 
-
-
 lm_fit_start = time.time()
 plm.fit(foreground_files, files=True)
 if args.verbose:
     lm_fit_spent = time.time() - lm_fit_start
     nr_tokens = sum(plm.document_freq.sum(0))
     print Fore.GREEN + "Fitted %d document models with %d tokens in %f seconds (avg %fs per file/avg %fs per token)" % ((plm.document_freq.shape)[0], nr_tokens, lm_fit_spent, lm_fit_spent/len(foreground_files),lm_fit_spent/nr_tokens)
-
+#
+##
 
 for (itr, (word, word_id)) in enumerate(plm.vectorizer.vocabulary_.iteritems()):
     #print ("(%d) %s: %f" % (word_id, word, plm.word_prob(word))).encode('utf-8')
