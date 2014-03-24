@@ -13,11 +13,37 @@ import argparse
 from heapq import nlargest
 from itertools import izip
 from sklearn.feature_extraction.text import CountVectorizer
-#from __future__ import print_function
 import cPickle as pickle
 
 
 old_settings = np.seterr(all='ignore') 
+
+def read_serialised_file(serialised_file, verbose=False, name=""):
+    file_read_start = time.time()
+    if verbose:
+        sys.stdout.write(Fore.GREEN + "Reading serialised %sfile: %s" % (name.rstrip() + ' ', serialised_file))
+    with open(serialised_file, 'rb') as f:
+        unpickled_data = pickle.load(f)
+    if verbose:
+        shape = ""
+        if type(unpickled_data) is dict:
+            shape = len(unpickled_data)
+        else:
+            shape = unpickled_data.shape
+        print Fore.GREEN + "\rRead the serialised %sfile in %f seconds. The file's shape is %s" % (name.rstrip() + ' ', time.time() - file_read_start, shape)
+
+    return unpickled_data
+        
+def write_serialised_file(content, file_name, verbose=False, name=""):
+    file_write_start = time.time()
+    if verbose:
+        sys.stdout.write(Fore.GREEN + "Writing serialised %sfile: %s" % (name.rstrip() + ' ', file_name))
+    with open(file_name, 'wb') as f:
+        pickle.dump(content, f, pickle.HIGHEST_PROTOCOL)
+
+    if verbose:
+        print Fore.GREEN + "\rWrote the serialised %sfile in %f seconds to %s" % (name.rstrip() + ' ', time.time() - file_write_start, file_name)
+
 
 def read_files(directory, extension, verbose=False, name=""):
     file_read_start = time.time()
@@ -62,28 +88,36 @@ def logsum(x):
  
 class ParsimoniousLM(object):
 
-    def __init__(self, documents, weight=0.5, min_df=1, max_df=1.0, serialised_corpus=None, verbose=False):
+    def __init__(self, weight=0.5, min_df=1, max_df=1.0, files=None, serialised=None, vocabulary=None, verbose=False):
         self.l = weight
 
-        if serialised_corpus is not None:
-            pass
-        else:
+        if serialised is not None and vocabulary is not None:
+            self.cf = serialised
+
+            self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df, vocabulary=vocabulary)
+        elif serialised is not None:
+            print Fore.RED + "Thanks for the serialised background corpus, but we also need the accompanying vocabulary file"
+            sys.exit(8)
+        elif files is not None:
             # analyses words, originally it counted the characters
             self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df)
 
             # corpus frequency
             corpus = []
-            for doc in documents:
+            for doc in files:
                 with open(doc, 'r') as f:
                     for line in f:
                         corpus.append( line.rstrip())
-            cf = np.array(self.vectorizer.fit_transform(corpus).sum(axis=0))[0]
+            self.cf = np.array(self.vectorizer.fit_transform(corpus).sum(axis=0))[0]
+        else:
+            print Fore.RED + "The parsimonious language model should at least have a background corpus!"
+            sys.exit(8)
         
         # Equation (2): log(P(t_i|C) * (1-lambda)) 
         if verbose:
             Fore.Green + "Applying lamdba to background corpus"
             lamdba_application_start = time.time()
-        self.corpus_prob = (np.log(cf) - np.log(np.sum(cf))) + np.log(1-self.l)
+        self.corpus_prob = (np.log(self.cf) - np.log(np.sum(self.cf))) + np.log(1-self.l)
         if verbose:
             print "\r" + Fore.Green + "Done applying lambda in %f seconds" % (time.time() - lambda_application_start)
  
@@ -175,6 +209,7 @@ backgroundgroup_argparser.add_argument("-B", "--serialisedbackground", help="the
 foregroundgroup_argparser.add_argument("-f", "--foreground", help="the directory with foreground files", metavar="dir", dest="fdir")
 argparser.add_argument("-wb", "--writeserialisedbackground", help="write the background to a serialised file", metavar="file", dest="wserb")
 foregroundgroup_argparser.add_argument("-F", "--serialisedforeground", help="the serialised foreground file", metavar="file", dest="rserf")
+argparser.add_argument("-V", "--vocabulary", help="the vocabulary", metavar="file", dest="vocabulary")
 argparser.add_argument("-wf", "--writeserialisedforeground", help="write the foreground to a serialised file", metavar="file", dest="wserf")
 argparser.add_argument("-r", "--recursive", help="traverse the directories recursively", action="store_true")
 argparser.add_argument("-e", "--extension", help="only use files with this extension", default="txt", metavar="ext")
@@ -198,23 +233,49 @@ if args.verbose:
     print Fore.YELLOW + "Extension: %s" % args.extension
     print Fore.YELLOW + "Iterations: %d" % args.iterations
 
-if args.bdir is not None:
+
+## Background part
+##
+if args.bdir:
+    if args.verbose:
+        print Fore.GREEN + "Reading files from directory: %s" % (args.bdir)
+
     background_files = read_files(args.bdir, args.extension, verbose=args.verbose, name="background")
+    lm_build_start = time.time()
+    plm = ParsimoniousLM(args.weight, files=background_files)
+elif args.rserb:
+    background_serialised_vocabulary = read_serialised_file(args.vocabulary, verbose=args.verbose, name="vocabulary")
 
-if args.fdir is not None:
-    foreground_files = read_files(args.fdir, args.extension, verbose=args.verbose, name="foreground")
+    background_serialised = read_serialised_file(args.rserb, verbose=args.verbose, name="background")
+    lm_build_start = time.time()
+    plm = ParsimoniousLM(args.weight, serialised=background_serialised, vocabulary=background_serialised_vocabulary)
 else:
-    print Fore.RED + "No input file given. Halting the execution!"
-    system.exit(8)
+    print Fore.RED + "No background input is given. Halting the execution!"
+    sys.exit(8)
 
-lm_build_start = time.time()
-plm = ParsimoniousLM(background_files, args.weight)
 if args.verbose:
     lm_build_spent = time.time() - lm_build_start
-    print Fore.GREEN + "Built a vocabulary with %d words from %d background corpus files in %f seconds (avg %fs per file/avg %fs per type)" % (len(plm.vectorizer.vocabulary_), len(background_files), lm_build_spent, lm_build_spent/len(background_files), lm_build_spent/len(plm.vectorizer.vocabulary_))
+    print Fore.GREEN + "Built a vocabulary with %d words from in %f seconds" % (len(plm.vectorizer.vocabulary_), lm_build_spent)
 
-# Clean up some of the mess
+if args.wserb and args.bdir:
+    write_serialised_file(plm.cf, args.wserb, verbose=args.verbose, name="background")
+if args.vocabulary and args.bdir:
+    write_serialised_file(plm.vectorizer.vocabulary_, args.vocabulary, verbose=args.verbose, name="vocabulary")
 background_files = None
+plm.cf = None
+#
+## 
+
+## Foreground part
+##
+if args.fdir:
+    foreground_files = read_files(args.fdir, args.extension, verbose=args.verbose, name="foreground")
+elif args.rserf:
+    foreground_serialised = read_serialised_file(args.rserf, verbose=args.verbose, name="foreground")
+else:
+    print Fore.RED + "No foreground input file given. Halting the execution!"
+    sys.exit(8)
+
 
 
 lm_fit_start = time.time()
@@ -226,6 +287,7 @@ if args.verbose:
 
 
 for (itr, (word, word_id)) in enumerate(plm.vectorizer.vocabulary_.iteritems()):
-    print ("(%d) %s: %f" % (word_id, word, plm.word_prob(word))).encode('utf-8')
+    #print ("(%d) %s: %f" % (word_id, word, plm.word_prob(word))).encode('utf-8')
+    pass
     #if itr > 10:
     #    break
