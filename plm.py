@@ -13,13 +13,17 @@ import argparse
 from heapq import nlargest
 from itertools import izip
 from sklearn.feature_extraction.text import CountVectorizer
- 
-old_settings = np.seterr(all='ignore') 
+#from __future__ import print_function
+import cPickle as pickle
 
+
+old_settings = np.seterr(all='ignore') 
 
 def read_files(directory, extension, verbose=False, name=""):
     file_read_start = time.time()
     found_files = []
+    if verbose:
+        sys.stdout.write(Fore.GREEN + "Listing all files... This might take a while")
     for root, dirs, files in os.walk(directory):
         for file in files:
             if file.endswith("." + extension):
@@ -27,9 +31,9 @@ def read_files(directory, extension, verbose=False, name=""):
     if verbose:
         if found_files:
             file_read_spent = time.time() - file_read_start
-            print Fore.GREEN + "Read %d %sfiles in %f seconds (avg %fs per file)" % (len(found_files), name.rstrip() + ' ', file_read_spent, file_read_spent/len(found_files))
+            print Fore.GREEN + "\rRead %d %sfiles in %f seconds (avg %fs per file)" % (len(found_files), name.rstrip() + ' ', file_read_spent, file_read_spent/len(found_files))
         else:
-            print Fore.RED + "No %sfiles read. Is it the right directory?" % (name.rstrip() + ' ')
+            print Fore.RED + "\rNo %sfiles read. Is it the right directory?" % (name.rstrip() + ' ')
             system.exit(8)
     return found_files
 
@@ -58,22 +62,30 @@ def logsum(x):
  
 class ParsimoniousLM(object):
 
-    def __init__(self, documents, weight=0.5, min_df=1, max_df=1.0):
+    def __init__(self, documents, weight=0.5, min_df=1, max_df=1.0, serialised_corpus=None, verbose=False):
         self.l = weight
 
-        # analyses words, originally it counted the characters
-        self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df)
+        if serialised_corpus is not None:
+            pass
+        else:
+            # analyses words, originally it counted the characters
+            self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df)
 
-        # corpus frequency
-        corpus = []
-        for doc in documents:
-            with open(doc, 'r') as f:
-                for line in f:
-                    corpus.append( line.rstrip())
-        cf = np.array(self.vectorizer.fit_transform(corpus).sum(axis=0))[0]
+            # corpus frequency
+            corpus = []
+            for doc in documents:
+                with open(doc, 'r') as f:
+                    for line in f:
+                        corpus.append( line.rstrip())
+            cf = np.array(self.vectorizer.fit_transform(corpus).sum(axis=0))[0]
         
         # Equation (2): log(P(t_i|C) * (1-lambda)) 
+        if verbose:
+            Fore.Green + "Applying lamdba to background corpus"
+            lamdba_application_start = time.time()
         self.corpus_prob = (np.log(cf) - np.log(np.sum(cf))) + np.log(1-self.l)
+        if verbose:
+            print "\r" + Fore.Green + "Done applying lambda in %f seconds" % (time.time() - lambda_application_start)
  
     # Create a language model per document
     def lm(self, document, iterations, eps):
@@ -153,31 +165,47 @@ class ParsimoniousLM(object):
 
 init(autoreset=True)
 
-argparser = argparse.ArgumentParser()
+argparser = argparse.ArgumentParser(description="This (partial) implementation of the 'Parsimonious Language Model for Information Retrieval' (Hiemstra et al., 2004) is forked from F. Karsdorp's implementation (https://github.com/fbkarsdorp/PLM). This fork can be found on https://github.com/naiaden/PLM. You can direct your comments to l.onrust@let.ru.nl")
+backgroundgroup_argparser = argparser.add_mutually_exclusive_group()
+foregroundgroup_argparser = argparser.add_mutually_exclusive_group()
+
 argparser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
-argparser.add_argument("-b", "--background", help="the directory with background files")
-argparser.add_argument("-f", "--foreground", help="the directory with foreground files")
+backgroundgroup_argparser.add_argument("-b", "--background", help="the directory with background files", metavar="dir", dest="bdir")
+backgroundgroup_argparser.add_argument("-B", "--serialisedbackground", help="the serialised background files", metavar="dir", dest="rserb")
+foregroundgroup_argparser.add_argument("-f", "--foreground", help="the directory with foreground files", metavar="dir", dest="fdir")
+argparser.add_argument("-wb", "--writeserialisedbackground", help="write the background to a serialised file", metavar="file", dest="wserb")
+foregroundgroup_argparser.add_argument("-F", "--serialisedforeground", help="the serialised foreground file", metavar="file", dest="rserf")
+argparser.add_argument("-wf", "--writeserialisedforeground", help="write the foreground to a serialised file", metavar="file", dest="wserf")
 argparser.add_argument("-r", "--recursive", help="traverse the directories recursively", action="store_true")
-argparser.add_argument("-e", "--extension", help="only use files with this extension", default="txt")
-argparser.add_argument("-w", "--weight", help="the mixture parameter between background and foreground", type=float, default="0.5")
-argparser.add_argument("-i", "--iterations", help="the number of iterations for EM", type=int, default="50")
+argparser.add_argument("-e", "--extension", help="only use files with this extension", default="txt", metavar="ext")
+argparser.add_argument("-w", "--weight", help="the mixture parameter between background and foreground", type=float, default="0.5", metavar="float")
+argparser.add_argument("-i", "--iterations", help="the number of iterations for EM", type=int, default="50", metavar="n")
 
 args = argparser.parse_args()
 
 if args.verbose:
     print Fore.YELLOW + "Verbosity enabled"
-    print Fore.YELLOW + "Background files in: %s" % args.background
-    print Fore.YELLOW + "Foreground files in: %s" % args.foreground
+    if args.bdir is not None:
+        print Fore.YELLOW + "Background files in: %s" % args.bdir
+    else:
+        print Fore.YELLOW + "Serialised background files in: %s" % args.rserb 
+    if args.fdir is not None:
+        print Fore.YELLOW + "Foreground files in: %s" % args.fdir
+    else:
+        print Fore.YELLOW + "Serialised foreground files in: %s" % args.rserf 
     print Fore.YELLOW + "Recursive file search: %s" % ("Yes" if test else "No")
     print Fore.YELLOW + "Lambda: %f" % args.weight
     print Fore.YELLOW + "Extension: %s" % args.extension
     print Fore.YELLOW + "Iterations: %d" % args.iterations
 
-if args.background is not None:
-    background_files = read_files(args.background, args.extension, verbose=args.verbose, name="background")
+if args.bdir is not None:
+    background_files = read_files(args.bdir, args.extension, verbose=args.verbose, name="background")
 
-if args.foreground is not None:
-    foreground_files = read_files(args.foreground, args.extension, verbose=args.verbose, name="foreground")
+if args.fdir is not None:
+    foreground_files = read_files(args.fdir, args.extension, verbose=args.verbose, name="foreground")
+else:
+    print Fore.RED + "No input file given. Halting the execution!"
+    system.exit(8)
 
 lm_build_start = time.time()
 plm = ParsimoniousLM(background_files, args.weight)
