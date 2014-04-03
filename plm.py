@@ -4,6 +4,7 @@ import numpy as np
 from scipy.sparse import *
 #from numba import jit
 import os
+import datetime
 import sys
 from colorama import init
 from colorama import Fore, Back, Style
@@ -17,6 +18,9 @@ import cPickle as pickle
 
 
 old_settings = np.seterr(all='ignore') 
+
+def hms(seconds):
+    return str(datetime.timedelta(seconds=seconds))
 
 def read_serialised_file(serialised_file, verbose=False, name=""):
     """ This method returns data from a serialised binary pickle file. 
@@ -35,7 +39,7 @@ def read_serialised_file(serialised_file, verbose=False, name=""):
             shape = len(unpickled_data)
         else:
             shape = unpickled_data.shape
-        print Fore.GREEN + "\rRead the serialised %sfile in %f seconds. The file's shape is %s" % (name.rstrip() + ' ', time.time() - file_read_start, shape)
+        print Fore.GREEN + "\rRead the serialised %sfile in %s. The file's shape is %s" % (name.rstrip() + ' ', hms(time.time() - file_read_start), shape)
 
     return unpickled_data
         
@@ -57,7 +61,7 @@ def write_serialised_file(content, file_name, verbose=False, name=""):
             shape = len(content)
         else:
             shape = content.shape
-        print Fore.GREEN + "\rWrote the serialised %sfile in %f seconds to %s with shape %s" % (name.rstrip() + ' ', time.time() - file_write_start, file_name, shape)
+        print Fore.GREEN + "\rWrote the serialised %sfile in %s to %s with shape %s" % (name.rstrip() + ' ', hms(time.time() - file_write_start), file_name, shape)
 
 def read_files(directory, extension, verbose=False, name=""):
     """ This method returns a list of files with a certain extension from a directory.
@@ -76,7 +80,7 @@ def read_files(directory, extension, verbose=False, name=""):
     if verbose:
         if found_files:
             file_read_spent = time.time() - file_read_start
-            print Fore.GREEN + "\rRead %d %sfiles in %f seconds (avg %fs per file)" % (len(found_files), name.rstrip() + ' ', file_read_spent, file_read_spent/len(found_files))
+            print Fore.GREEN + "\rRead %d %sfiles in %s (avg %fs per file)" % (len(found_files), name.rstrip() + ' ', hms(file_read_spent), file_read_spent/len(found_files))
         else:
             print Fore.RED + "\rNo %sfiles read. Is it the right directory?" % (name.rstrip() + ' ')
             system.exit(8)
@@ -180,7 +184,21 @@ class ParsimoniousLM(object):
             if (diff < eps).all():
                 break
         return doc_prob
- 
+
+    def get_word(self, wordId):
+
+        #for key, value in self.vectorizer.vocabulary_.iteritems():
+        #    if wordId == value:
+        #        return key
+        return self.rdictionary[wordId]
+        #print Fore.RED + "%d does not exist as a word?"
+
+    def build_reverse_dictionary(self):
+        self.rdictionary = [None]*len(self.vectorizer.vocabulary_)#np.empty(len(self.vectorizer.vocabulary_), dtype=str)
+        for key, value in plm.vectorizer.vocabulary_.iteritems():
+            self.rdictionary[value] = key.encode('utf-8')
+            #self.rdictionary[value] = "hoi"
+
     def fit(self, texts, iterations=50, eps=1e-5, files=False):
         """ This function fits a foreground model onto the background model. The foreground model consists of texts, and the EM parameters are iterations and epsilon for the convergence regulation.
             If files is False, then texts contains an array of strings, each string comprising a document. If files is True, then each entry in texts is a file name pointing to a file that contains a text.
@@ -190,6 +208,8 @@ class ParsimoniousLM(object):
         """
         self.document_model = dok_matrix((len(texts),len(self.vectorizer.vocabulary_)))
         self.document_freq = dok_matrix((len(texts),len(self.vectorizer.vocabulary_)))
+
+        #print self.rdictionary
 
         if files:
             for label, file_name in enumerate(texts):
@@ -204,6 +224,26 @@ class ParsimoniousLM(object):
                         file_content += line.rstrip()
                 tf, lm = self.lm(file_content, iterations, eps)
 
+                if args.fwpdir:
+                    #print file_name
+                    ## Dirty hack, and only applicable when there is a hierarchical structure
+                    ## Should also be a regex or the like. This is just plain stupid.
+                    file_dir, ext_file_name = file_name.split('/')[-2:]
+                    bare_file_name, file_ext = ext_file_name.split('.')
+
+                    doc_prob_dir = args.fwpdir + "/" + file_dir
+                    if not os.path.exists(doc_prob_dir):
+                        os.makedirs(doc_prob_dir)
+
+                    doc_prob_file_name = doc_prob_dir + "/" + bare_file_name + ".wp"
+
+                    self.print_debug(" fit::writing doc probs to file")
+                    with open(doc_prob_file_name, 'w') as f:
+                        for (index,), value in np.ndenumerate(lm):
+                            if not np.isinf(value):
+                                #print self.get_word(index), value
+                                f.write("%s\t%s\n" % (self.get_word(index), value))
+
                 self.print_debug(" fit::frequency and model update")
                 for (m,n) in [ (x,y) for (x,y) in enumerate(tf) if y > 0 ]:
                     self.document_freq[label,m] = n
@@ -214,6 +254,7 @@ class ParsimoniousLM(object):
                 sys.stdout.write("\r")
                 sys.stdout.flush()
         else:
+            print Fore.RED + "You have found a dark place in the code, this might work. Or it might not."
             for label, text in enumerate(texts):
                 tf, lm = self.lm(text, iterations, eps)
                 
@@ -259,13 +300,14 @@ foregroundgroup_argparser = argparser.add_mutually_exclusive_group()
 
 argparser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
 backgroundgroup_argparser.add_argument("-b", "--background", help="the directory with background files", metavar="dir", dest="bdir")
-backgroundgroup_argparser.add_argument("-B", "--serialisedbackground", help="the serialised background files", metavar="dir", dest="rserb")
+backgroundgroup_argparser.add_argument("-B", "--serialisedbackground", help="the serialised background file", metavar="dir", dest="rserb")
 foregroundgroup_argparser.add_argument("-f", "--foreground", help="the directory with foreground files", metavar="dir", dest="fdir")
 argparser.add_argument("-wb", "--writeserialisedbackground", help="write the background to a serialised file", metavar="file", dest="wserb")
-foregroundgroup_argparser.add_argument("-F", "--serialisedforeground", help="the serialised foreground file", metavar="file", dest="rserf")
+foregroundgroup_argparser.add_argument("-F", "--serialisedforeground", help="the serialised foreground file. Not yet implemented", metavar="file", dest="rserf")
 argparser.add_argument("-V", "--vocabulary", help="the vocabulary, only used for in/output of serialised files", metavar="file", dest="vocabulary")
 argparser.add_argument("-wf", "--writeserialisedforeground", help="write the foreground to a serialised file", metavar="file", dest="wserf")
-argparser.add_argument("-o", "--outputfile", help="write word probs to this file", metavar="file", dest="ofile")
+argparser.add_argument("-P", "--allwordprobs", help="write word probs to this file. This takes forever, be prepared!", metavar="file", dest="wpfile")
+argparser.add_argument("-p", "--docwordprobs", help="write a file per foreground document with the word probabilities in this directory", dest="fwpdir")
 argparser.add_argument("-r", "--recursive", help="traverse the directories recursively", action="store_true")
 argparser.add_argument("-e", "--extension", help="only use files with this extension", default="txt", metavar="ext")
 argparser.add_argument("-w", "--weight", help="the mixture parameter between background and foreground", type=float, default="0.5", metavar="float")
@@ -284,7 +326,7 @@ if args.verbose:
         print Fore.YELLOW + "Foreground files in: %s" % args.fdir
     else:
         print Fore.YELLOW + "Serialised foreground files in: %s" % args.rserf 
-    print Fore.YELLOW + "Output file: %s" % args.ofile
+    print Fore.YELLOW + "Word probability output file: %s" % args.wpfile
     print Fore.YELLOW + "Debug enabled: %s" % ("Yes" if args.debug else "No")
     print Fore.YELLOW + "Recursive file search: %s" % ("Yes" if args.recursive else "No")
     print Fore.YELLOW + "Lambda: %f" % args.weight
@@ -311,7 +353,7 @@ else:
 
 if args.verbose:
     lm_build_spent = time.time() - lm_build_start
-    print Fore.GREEN + "Built a vocabulary with %d words from in %f seconds" % (len(plm.vectorizer.vocabulary_), lm_build_spent)
+    print Fore.GREEN + "Built a vocabulary with %d words from in %s" % (len(plm.vectorizer.vocabulary_), hms(lm_build_spent))
 
 if args.wserb and args.bdir:
     write_serialised_file(plm.cf, args.wserb, verbose=args.verbose, name="background")
@@ -322,12 +364,23 @@ plm.cf = None
 #
 ## 
 
+if args.verbose:
+    print Fore.GREEN + "Building reverse dictionary"
+
+plm.build_reverse_dictionary()
+rd_start = time.time()
+
+if args.verbose:
+    print Fore.GREEN + "Done building reverse dictionary in %s" % (hms(time.time() - rd_start))
+
 ## Foreground part
 ##
 if args.fdir:
     foreground_files = read_files(args.fdir, args.extension, verbose=args.verbose, name="foreground")
 elif args.rserf:
-    foreground_serialised = read_serialised_file(args.rserf, verbose=args.verbose, name="foreground")
+    print Fore.RED + "Although there is some code already, this does not work. Try the directory method. Halting"
+    sys.exit(8)
+    #foreground_serialised = read_serialised_file(args.rserf, verbose=args.verbose, name="foreground")
 else:
     print Fore.RED + "No foreground input file given. Halting the execution!"
     sys.exit(8)
@@ -337,7 +390,7 @@ plm.fit(foreground_files, iterations=args.iterations, files=True)
 if args.verbose:
     lm_fit_spent = time.time() - lm_fit_start
     nr_tokens = sum(plm.document_freq.sum(0))
-    print Fore.GREEN + "Fitted %d document models with %d tokens in %f seconds (avg %fs per file/avg %fs per token)" % ((plm.document_freq.shape)[0], nr_tokens, lm_fit_spent, lm_fit_spent/len(foreground_files),lm_fit_spent/nr_tokens)
+    print Fore.GREEN + "Fitted %d document models with %d tokens in %s (avg %fs per file/avg %fs per token)" % ((plm.document_freq.shape)[0], nr_tokens, hms(lm_fit_spent), lm_fit_spent/len(foreground_files),lm_fit_spent/nr_tokens)
 #
 ##
 
@@ -345,11 +398,11 @@ plm.debug_output = "\rWP "
 
 ## Word probs part
 ##
-if args.ofile:
+if args.wpfile:
     if args.verbose:
-        print Fore.GREEN + "Writing word probabilities to %s" %  args.ofile
+        print Fore.GREEN + "Writing word probabilities to %s" %  args.wpfile
     wp_start = time.time()
-    with open(args.ofile, 'w') as f:
+    with open(args.wpfile, 'w') as f:
         for (itr, (word, word_id)) in enumerate(plm.vectorizer.vocabulary_.iteritems()):
             plm.print_debug(" Processing word: %d" % itr)
             f.write(("(%d) %s: %f" % (word_id, word, plm.word_prob(word))).encode('utf-8'))
@@ -360,4 +413,4 @@ if args.ofile:
 
     if args.verbose:
         wp_spent = time.time() - wp_start
-        print Fore.GREEN + "Writing word probabilities took %f seconds" % wp_spent
+        print Fore.GREEN + "Writing word probabilities took %s" % hms(wp_spent)
