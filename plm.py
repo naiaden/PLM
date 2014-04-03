@@ -53,7 +53,11 @@ def write_serialised_file(content, file_name, verbose=False, name=""):
         pickle.dump(content, f, pickle.HIGHEST_PROTOCOL)
 
     if verbose:
-        print Fore.GREEN + "\rWrote the serialised %sfile in %f seconds to %s" % (name.rstrip() + ' ', time.time() - file_write_start, file_name)
+        if type(content) is dict:
+            shape = len(content)
+        else:
+            shape = content.shape
+        print Fore.GREEN + "\rWrote the serialised %sfile in %f seconds to %s with shape %s" % (name.rstrip() + ' ', time.time() - file_write_start, file_name, shape)
 
 def read_files(directory, extension, verbose=False, name=""):
     """ This method returns a list of files with a certain extension from a directory.
@@ -147,11 +151,14 @@ class ParsimoniousLM(object):
             Returns the term frequencies and the document probabilities for all the words in document D.
         """
         # term frequency
+        self.print_debug(" lm::Transforming")
         tf = self.vectorizer.transform([document]).toarray()[0]
 
         # Equation (3): log(P(t_i|D=d))
+        self.print_debug(" lm::Equation 3")
         doc_prob = (np.log(tf > 0) - np.log((tf > 0).sum()))# + np.log(self.l)
 
+        self.print_debug(" lm::EM")
         doc_prob = self.EM(tf, doc_prob, iterations, eps)
         return (tf, doc_prob)
  
@@ -161,6 +168,7 @@ class ParsimoniousLM(object):
         """
         tf = np.log(tf)
         for i in xrange(1, iterations + 1):
+            self.print_debug(" EM::iteration %d" % i)
             doc_prob += np.log(self.l)
 
             # follows E and M steps from the paper
@@ -185,19 +193,23 @@ class ParsimoniousLM(object):
 
         if files:
             for label, file_name in enumerate(texts):
+                self.debug_output = Fore.GREEN + "\r%d/%d %d%%" %(label,len(texts),float(label)/len(texts)*100.0)
                 if args.verbose:
-                    sys.stdout.write(Fore.GREEN + "\r%d/%d %d%%" %(label,len(texts),float(label)/len(texts)*100.0))
+                    sys.stdout.write(self.debug_output)
                     sys.stdout.flush()
                 file_content = ""
+                self.print_debug(" fit::reading file")
                 with open(file_name, 'r') as f:
                     for line in f:
                         file_content += line.rstrip()
                 tf, lm = self.lm(file_content, iterations, eps)
 
+                self.print_debug(" fit::frequency and model update")
                 for (m,n) in [ (x,y) for (x,y) in enumerate(tf) if y > 0 ]:
                     self.document_freq[label,m] = n
                 for (m,n) in [ (x,y) for (x,y) in enumerate(lm) if not (np.isnan(y) or np.isinf(y)) ]:
                     self.document_model[label,m] = n
+                self.print_debug(" fit::done")
             if args.verbose:
                 sys.stdout.write("\r")
                 sys.stdout.flush()
@@ -231,6 +243,11 @@ class ParsimoniousLM(object):
             return np.log(pow(np.exp(word_prob), 1.0/occurences)) if occurences > 0 else word_prob
         return word_prob
 
+    def print_debug(self, string):
+        if args.debug:
+            sys.stdout.write(self.debug_output + string)
+            sys.stdout.flush()
+
 
 ################## Things to process cmd-line arguments and stuff
 
@@ -248,10 +265,12 @@ argparser.add_argument("-wb", "--writeserialisedbackground", help="write the bac
 foregroundgroup_argparser.add_argument("-F", "--serialisedforeground", help="the serialised foreground file", metavar="file", dest="rserf")
 argparser.add_argument("-V", "--vocabulary", help="the vocabulary, only used for in/output of serialised files", metavar="file", dest="vocabulary")
 argparser.add_argument("-wf", "--writeserialisedforeground", help="write the foreground to a serialised file", metavar="file", dest="wserf")
+argparser.add_argument("-o", "--outputfile", help="write word probs to this file", metavar="file", dest="ofile")
 argparser.add_argument("-r", "--recursive", help="traverse the directories recursively", action="store_true")
 argparser.add_argument("-e", "--extension", help="only use files with this extension", default="txt", metavar="ext")
 argparser.add_argument("-w", "--weight", help="the mixture parameter between background and foreground", type=float, default="0.5", metavar="float")
 argparser.add_argument("-i", "--iterations", help="the number of iterations for EM", type=int, default="50", metavar="n")
+argparser.add_argument("--debug", help="enable debug output. Warning, can be a lot of info", action="store_true")
 
 args = argparser.parse_args()
 
@@ -265,7 +284,9 @@ if args.verbose:
         print Fore.YELLOW + "Foreground files in: %s" % args.fdir
     else:
         print Fore.YELLOW + "Serialised foreground files in: %s" % args.rserf 
-    print Fore.YELLOW + "Recursive file search: %s" % ("Yes" if test else "No")
+    print Fore.YELLOW + "Output file: %s" % args.ofile
+    print Fore.YELLOW + "Debug enabled: %s" % ("Yes" if args.debug else "No")
+    print Fore.YELLOW + "Recursive file search: %s" % ("Yes" if args.recursive else "No")
     print Fore.YELLOW + "Lambda: %f" % args.weight
     print Fore.YELLOW + "Extension: %s" % args.extension
     print Fore.YELLOW + "Iterations: %d" % args.iterations
@@ -312,7 +333,7 @@ else:
     sys.exit(8)
 
 lm_fit_start = time.time()
-plm.fit(foreground_files, files=True)
+plm.fit(foreground_files, iterations=args.iterations, files=True)
 if args.verbose:
     lm_fit_spent = time.time() - lm_fit_start
     nr_tokens = sum(plm.document_freq.sum(0))
@@ -320,8 +341,23 @@ if args.verbose:
 #
 ##
 
-for (itr, (word, word_id)) in enumerate(plm.vectorizer.vocabulary_.iteritems()):
-    #print ("(%d) %s: %f" % (word_id, word, plm.word_prob(word))).encode('utf-8')
-    pass
-    #if itr > 10:
-    #    break
+plm.debug_output = "\rWP "
+
+## Word probs part
+##
+if args.ofile:
+    if args.verbose:
+        print Fore.GREEN + "Writing word probabilities to %s" %  args.ofile
+    wp_start = time.time()
+    with open(args.ofile, 'w') as f:
+        for (itr, (word, word_id)) in enumerate(plm.vectorizer.vocabulary_.iteritems()):
+            plm.print_debug(" Processing word: %d" % itr)
+            f.write(("(%d) %s: %f" % (word_id, word, plm.word_prob(word))).encode('utf-8'))
+            #print ("(%d) %s: %f" % (word_id, word, plm.word_prob(word))).encode('utf-8')
+            #pass
+    sys.stdout.write("\r")
+    sys.stdout.flush()
+
+    if args.verbose:
+        wp_spent = time.time() - wp_start
+        print Fore.GREEN + "Writing word probabilities took %f seconds" % wp_spent
