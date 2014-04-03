@@ -20,6 +20,8 @@ import cPickle as pickle
 old_settings = np.seterr(all='ignore') 
 
 def hms(seconds):
+    """ Returns a string representation in h:mm:ss.ssssss of the input
+    """
     return str(datetime.timedelta(seconds=seconds))
 
 def read_serialised_file(serialised_file, verbose=False, name=""):
@@ -83,7 +85,7 @@ def read_files(directory, extension, verbose=False, name=""):
             print Fore.GREEN + "\rRead %d %sfiles in %s (avg %fs per file)" % (len(found_files), name.rstrip() + ' ', hms(file_read_spent), file_read_spent/len(found_files))
         else:
             print Fore.RED + "\rNo %sfiles read. Is it the right directory?" % (name.rstrip() + ' ')
-            system.exit(8)
+            sys.exit(8)
     return found_files
 
 def logsum(x):
@@ -111,7 +113,7 @@ def logsum(x):
  
 class ParsimoniousLM(object):
 
-    def __init__(self, weight=0.5, min_df=1, max_df=1.0, files=None, serialised=None, vocabulary=None, verbose=False):
+    def __init__(self, weight=0.5, max_features=None, min_df=1, max_df=1.0, files=None, serialised=None, vocabulary=None, verbose=False):
         """ This constructor builds a vectorizer and a background corpus' frequency counts
             weight is the interpolation factor/mixture weight for a balance between the background and foreground proabilities.
             min_df, maxdf are the minimum and respectively maximum document frequencies for the word needed to be modelled.
@@ -123,13 +125,13 @@ class ParsimoniousLM(object):
         if serialised is not None and vocabulary is not None:
             self.cf = serialised
 
-            self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df, vocabulary=vocabulary)
+            self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df, max_features=max_features, vocabulary=vocabulary)
         elif serialised is not None:
             print Fore.RED + "Thanks for the serialised background corpus, but we also need the accompanying vocabulary file"
             sys.exit(8)
         elif files is not None:
             # analyses words, originally it counted the characters
-            self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df)
+            self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df, max_features=max_features)
 
             # corpus frequency
             corpus = []
@@ -308,6 +310,9 @@ argparser.add_argument("-V", "--vocabulary", help="the vocabulary, only used for
 argparser.add_argument("-wf", "--writeserialisedforeground", help="write the foreground to a serialised file", metavar="file", dest="wserf")
 argparser.add_argument("-P", "--allwordprobs", help="write word probs to this file. This takes forever, be prepared!", metavar="file", dest="wpfile")
 argparser.add_argument("-p", "--docwordprobs", help="write a file per foreground document with the word probabilities in this directory", dest="fwpdir")
+argparser.add_argument("-m", "--maxfeatures", help="the n most frequent words", metavar="n", dest="maxfeatures", type=int, default="-1")
+argparser.add_argument("--mindf", help="ignore terms that have a document frequency strictly lower than x, or a proportion of documents", metavar="x", dest="mindf", default="1", type=int) 
+argparser.add_argument("--maxdf", help="ignore terms that have a document frequency strictly higher than x, or a proportion of documents", metavar="x", dest="maxdf", default="1.0", type=float) 
 argparser.add_argument("-r", "--recursive", help="traverse the directories recursively", action="store_true")
 argparser.add_argument("-e", "--extension", help="only use files with this extension", default="txt", metavar="ext")
 argparser.add_argument("-w", "--weight", help="the mixture parameter between background and foreground", type=float, default="0.5", metavar="float")
@@ -315,6 +320,9 @@ argparser.add_argument("-i", "--iterations", help="the number of iterations for 
 argparser.add_argument("--debug", help="enable debug output. Warning, can be a lot of info", action="store_true")
 
 args = argparser.parse_args()
+
+if args.maxfeatures < 0:
+    args.maxfeatures = None
 
 if args.verbose:
     print Fore.YELLOW + "Verbosity enabled"
@@ -332,6 +340,12 @@ if args.verbose:
     print Fore.YELLOW + "Lambda: %f" % args.weight
     print Fore.YELLOW + "Extension: %s" % args.extension
     print Fore.YELLOW + "Iterations: %d" % args.iterations
+    if args.mindf:
+        print (Fore.YELLOW + "Min df: %s" % args.mindf)
+    if args.maxdf:
+        print (Fore.YELLOW + "Max df: %s" % args.maxdf)
+    if args.maxfeatures:
+        print (Fore.YELLOW + "Max features: %s" % args.maxfeatures)
 
 
 ## Background part
@@ -340,13 +354,13 @@ if args.bdir:
     background_files = read_files(args.bdir, args.extension, verbose=args.verbose, name="background")
 
     lm_build_start = time.time()
-    plm = ParsimoniousLM(args.weight, files=background_files)
+    plm = ParsimoniousLM(args.weight, files=background_files, min_df=args.mindf, max_df=args.maxdf, max_features=args.maxfeatures)
 elif args.rserb:
     background_serialised_vocabulary = read_serialised_file(args.vocabulary, verbose=args.verbose, name="vocabulary")
     background_serialised = read_serialised_file(args.rserb, verbose=args.verbose, name="background")
 
     lm_build_start = time.time()
-    plm = ParsimoniousLM(args.weight, serialised=background_serialised, vocabulary=background_serialised_vocabulary)
+    plm = ParsimoniousLM(args.weight, serialised=background_serialised, vocabulary=background_serialised_vocabulary, min_df=args.mindf, max_df=args.maxdf, max_features=args.maxfeatures)
 else:
     print Fore.RED + "No background input is given. Halting the execution!"
     sys.exit(8)
