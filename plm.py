@@ -188,12 +188,7 @@ class ParsimoniousLM(object):
         return doc_prob
 
     def get_word(self, wordId):
-
-        #for key, value in self.vectorizer.vocabulary_.iteritems():
-        #    if wordId == value:
-        #        return key
         return self.rdictionary[wordId]
-        #print Fore.RED + "%d does not exist as a word?"
 
     def build_reverse_dictionary(self):
         self.rdictionary = [None]*len(self.vectorizer.vocabulary_)#np.empty(len(self.vectorizer.vocabulary_), dtype=str)
@@ -214,8 +209,12 @@ class ParsimoniousLM(object):
         #print self.rdictionary
 
         if files:
+            last_iter_start = time.time()
+            begin_iter_start = last_iter_start
             for label, file_name in enumerate(texts):
-                self.debug_output = Fore.GREEN + "\r%d/%d %d%%" %(label,len(texts),float(label)/len(texts)*100.0)
+                ttf = hms((time.time() - begin_iter_start)/max(1,label)*(len(texts)-label))
+                self.debug_output = Fore.GREEN + "\r%d/%d %d%% (TTF: %s)" %(label,len(texts),float(label)/len(texts)*100.0, ttf)
+                last_iter_start = time.time()
                 if args.verbose:
                     sys.stdout.write(self.debug_output)
                     sys.stdout.flush()
@@ -283,7 +282,7 @@ class ParsimoniousLM(object):
                     word_prob += self.document_model[d_id, w_id]
                     occurences += self.document_freq[d_id, w_id]
             # geometric average (sum over logs)
-            return np.log(pow(np.exp(word_prob), 1.0/occurences)) if occurences > 0 else word_prob
+            return np.log(pow(np.exp(word_prob), 1.0/occurences)) if occurences > 0 else log(word_prob)
         return word_prob
 
     def print_debug(self, string):
@@ -419,7 +418,7 @@ if args.wpfile:
     with open(args.wpfile, 'w') as f:
         for (itr, (word, word_id)) in enumerate(plm.vectorizer.vocabulary_.iteritems()):
             plm.print_debug(" Processing word: %d" % itr)
-            f.write(("(%d) %s: %f" % (word_id, word, plm.word_prob(word))).encode('utf-8'))
+            f.write(("(%d) %s: %f\n" % (word_id, word, plm.word_prob(word))).encode('utf-8'))
             #print ("(%d) %s: %f" % (word_id, word, plm.word_prob(word))).encode('utf-8')
             #pass
     sys.stdout.write("\r")
