@@ -113,7 +113,7 @@ def logsum(x):
  
 class ParsimoniousLM(object):
 
-    def __init__(self, weight=0.5, max_features=None, min_df=1, max_df=1.0, files=None, serialised=None, vocabulary=None, verbose=False):
+    def __init__(self, weight=0.5, max_features=None, maxn=1, min_df=1, max_df=1.0, files=None, serialised=None, vocabulary=None, verbose=False):
         """ This constructor builds a vectorizer and a background corpus' frequency counts
             weight is the interpolation factor/mixture weight for a balance between the background and foreground proabilities.
             min_df, maxdf are the minimum and respectively maximum document frequencies for the word needed to be modelled.
@@ -125,13 +125,13 @@ class ParsimoniousLM(object):
         if serialised is not None and vocabulary is not None:
             self.cf = serialised
 
-            self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df, max_features=max_features, vocabulary=vocabulary)
+            self.vectorizer = CountVectorizer(ngram_range=(1,maxn), min_df=min_df, max_df=max_df, max_features=max_features, vocabulary=vocabulary)
         elif serialised is not None:
             print Fore.RED + "Thanks for the serialised background corpus, but we also need the accompanying vocabulary file"
             sys.exit(8)
         elif files is not None:
             # analyses words, originally it counted the characters
-            self.vectorizer = CountVectorizer(min_df=min_df, max_df=max_df, max_features=max_features)
+            self.vectorizer = CountVectorizer(ngram_range=(1,maxn), min_df=min_df, max_df=max_df, max_features=max_features)
 
             # corpus frequency
             corpus = []
@@ -269,7 +269,7 @@ class ParsimoniousLM(object):
         """
         if not hasattr(self, 'document_model'):
             raise ValueError("No Language Model fitted.")
-        word_prob = 0
+        word_prob = -1
        
         # the word frequency is implicit in the background_model
         # by virtue of the self.lm(...) function. Here we just 
@@ -279,10 +279,14 @@ class ParsimoniousLM(object):
             occurences = 0
             for ((d_id, w_id), val) in self.document_model.items():
                 if w_id == word_id:
+                    if word_prob < 0:
+                        word_prob = 0
                     word_prob += self.document_model[d_id, w_id]
                     occurences += self.document_freq[d_id, w_id]
             # geometric average (sum over logs)
-            return np.log(pow(np.exp(word_prob), 1.0/occurences)) if occurences > 0 else log(word_prob)
+            #return np.log(pow(np.exp(word_prob), 1.0/occurences)) if occurences > 0 else log(word_prob)
+            # if word_prob < 0, then occurences 
+            return np.log(pow(np.exp(word_prob), 1.0/occurences)) if (word_prob > 0 and occurences > 0) else 0.0
         return word_prob
 
     def print_debug(self, string):
@@ -317,6 +321,7 @@ argparser.add_argument("-e", "--extension", help="only use files with this exten
 argparser.add_argument("-w", "--weight", help="the mixture parameter between background and foreground", type=float, default="0.5", metavar="float")
 argparser.add_argument("-i", "--iterations", help="the number of iterations for EM", type=int, default="50", metavar="n")
 argparser.add_argument("--debug", help="enable debug output. Warning, can be a lot of info", action="store_true")
+argparser.add_argument("-n", "--maxn", help="the max number of n for generating n-grams. Default n=1 (unigrams)", type=int, default="1", metavar="n", dest="maxn")
 
 args = argparser.parse_args()
 
@@ -338,6 +343,7 @@ if args.verbose:
     print Fore.YELLOW + "Recursive file search: %s" % ("Yes" if args.recursive else "No")
     print Fore.YELLOW + "Lambda: %f" % args.weight
     print Fore.YELLOW + "Extension: %s" % args.extension
+    print Fore.YELLOW + "Max size n-grams: %d" % args.maxn
     print Fore.YELLOW + "Iterations: %d" % args.iterations
     if args.mindf:
         print (Fore.YELLOW + "Min df: %s" % args.mindf)
@@ -353,13 +359,13 @@ if args.bdir:
     background_files = read_files(args.bdir, args.extension, verbose=args.verbose, name="background")
 
     lm_build_start = time.time()
-    plm = ParsimoniousLM(args.weight, files=background_files, min_df=args.mindf, max_df=args.maxdf, max_features=args.maxfeatures)
+    plm = ParsimoniousLM(args.weight, files=background_files, maxn=args.maxn, min_df=args.mindf, max_df=args.maxdf, max_features=args.maxfeatures)
 elif args.rserb:
     background_serialised_vocabulary = read_serialised_file(args.vocabulary, verbose=args.verbose, name="vocabulary")
     background_serialised = read_serialised_file(args.rserb, verbose=args.verbose, name="background")
 
     lm_build_start = time.time()
-    plm = ParsimoniousLM(args.weight, serialised=background_serialised, vocabulary=background_serialised_vocabulary, min_df=args.mindf, max_df=args.maxdf, max_features=args.maxfeatures)
+    plm = ParsimoniousLM(args.weight, serialised=background_serialised, vocabulary=background_serialised_vocabulary, min_df=args.mindf, max_df=args.maxdf, max_features=args.maxfeatures, maxn=args.maxn)
 else:
     print Fore.RED + "No background input is given. Halting the execution!"
     sys.exit(8)
